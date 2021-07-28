@@ -1,0 +1,571 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r}
+```{r}
+# All the functions and libraries needed for this script
+library(boot)
+library(limma)
+library(pheatmap)
+library(RColorBrewer)
+library(viridis)
+library(dplyr)
+library(gplots)
+library(heatmap3)
+library(caret)
+library(nnet)
+library(ROCR)
+library(ranger)
+library(data.table)
+library(xgboost)
+library(Matrix)
+library(glmnet)
+library(pROC)
+library(mRMRe)
+library(tibble)
+library(SummarizedExperiment)
+library(edgeR)
+library(affy)
+
+make_label <- function(HTSeq_matrix) {
+  label_HTSeq <- factor(c(0, 1))
+  x = 1
+  for (i in rownames(HTSeq_matrix)) {
+    if (substr(i, start = 1, stop = 4) == "LUAD") {
+      label_HTSeq[x] = 1
+    } else {
+      label_HTSeq[x] = 0
+    }
+    x = x + 1
+  }
+  return (label_HTSeq)
+}
+mean_squared_error <- function(data, index) {
+  responses <- data$response[index]
+  predictions <- data$prediction[index]
+  MSE <- mean((responses - predictions)^2)
+  return(MSE)
+}
+mean_absolute_error <- function(data, index) {
+  responses <- data$response[index]
+  predictions <- data$prediction[index]
+  MAE <- mean(abs(responses - predictions))
+  return(MAE)
+}
+OS_R_squared <- function(data, index) {
+  responses <- data$response[index]
+  predictions <- data$prediction[index]
+  baseline <- data$baseline[index]
+  SSE <- sum((responses - predictions)^2)
+  SST <- sum((responses - baseline)^2)
+  r2 <- 1 - SSE/SST
+  return(r2)
+}
+OSR2 <- function(prediction, test, train) {
+  SSE = sum((test - prediction)^2)
+  SST = sum((test - mean(train))^2)
+  OSR2 = 1 - SSE/SST
+  return (OSR2)
+}
+tableAccuracy <- function(test, pred) {
+  t = table(test, pred)
+  a = sum(diag(t)/length(test))
+  return(a)
+}
+
+accuracy <- function(data, index) {
+  responses <- data$response[index]
+  predictions <- data$prediction[index]
+  
+  acc <- tableAccuracy(responses, predictions)
+  return (acc)
+  
+}
+all_metrics <- function(data, index) {
+  mse <- mean_squared_error(data, index)
+  mae <- mean_absolute_error(data, index)
+  OSR2 <- OS_R_squared(data, index)
+  accurate <- accuracy(data, index)
+  return(c(mse, mae, OSR2, accurate))
+}
+
+reverse_log <- function(data) {
+  return (2^data)
+}
+```
+
+
+```{r}
+
+curated <- read.csv("curated_dataset.csv", header = FALSE)
+
+head(curated)
+
+
+curated[,1]
+
+
+bladder_cancer <- data.frame(1:nrow(curated))
+hep_cancer <- data.frame(1:nrow(curated))
+bre_cancer <- data.frame(1:nrow(curated))
+crc_cancer <- data.frame(1:nrow(curated))
+eso_cancer <- data.frame(1:nrow(curated))
+gas_cancer <- data.frame(1:nrow(curated))
+lung_cancer <- data.frame(1:nrow(curated))
+ova_cancer <- data.frame(1:nrow(curated))
+glio_cancer <- data.frame(1:nrow(curated))
+sar_cancer <- data.frame(1:nrow(curated))
+pan_cancer <- data.frame(1:nrow(curated))
+pro_cancer <- data.frame(1:nrow(curated))
+bil_cancer <- data.frame(1:nrow(curated))
+non_cancer <- data.frame(1:nrow(curated))
+
+bla = 1
+hep = 1
+bre = 1
+crc = 1
+eso = 1
+gas = 1
+lung = 1
+ova = 1
+glio = 1
+sar = 1
+pan = 1
+pro = 1
+bil = 1
+non = 1
+
+for (i in 1:(length(colnames(curated)) - 1)) {
+  cancer_type <- curated[,i+1][1]
+  cancer_type <- substr(cancer_type, start = 1, stop = 2)
+  print(i)
+  print(cancer_type)
+  if (cancer_type == "Bl") {
+    name <- paste("Bladder_", toString(bla))
+    bladder_cancer[name] <- curated[,i+1]
+    bla = bla + 1
+  } else if (cancer_type == "He" | cancer_type == "HC"){
+    name <- paste("HCC_", toString(hep))
+    hep_cancer[name] <- curated[,i+1]
+    hep = hep + 1
+  } else if (cancer_type == "Br") {
+    name <- paste("Breast_", toString(bre))
+    bre_cancer[name] <- curated[,i+1]
+    bre = bre + 1 
+  } else if (cancer_type == "Co" | cancer_type == "CC") {
+    name <- paste("CRC_", toString(crc))
+    crc_cancer[name] <- curated[,i+1]
+    crc = crc + 1 
+  } else if (cancer_type == "Es" | cancer_type == "EC") {
+    name <- paste("Esophageal_", toString(eso))
+    eso_cancer[name] <- curated[,i+1]
+    eso = eso + 1 
+  } else if (cancer_type == "Ga" | cancer_type == "GC") {
+    name <- paste("Gastric_", toString(gas))
+    gas_cancer[name] <- curated[,i+1]
+    gas = gas + 1 
+    
+  } else if (cancer_type == "Lu" | cancer_type == "Lk") {
+    name <- paste("Lung_", toString(lung))
+    lung_cancer[name] <- curated[,i+1]
+    lung = lung + 1 
+    
+  } else if (cancer_type == "Ov") {
+    name <- paste("Ovarian_", toString(ova))
+    ova_cancer[name] <- curated[,i+1]
+    ova = ova + 1 
+    
+  } else if (cancer_type == "GL" | cancer_type == "Gl") {
+    name <- paste("Glioma_", toString(glio))
+    glio_cancer[name] <- curated[,i+1]
+    glio = glio + 1 
+  } else if (cancer_type == "SA" | cancer_type == "Sa") {
+    name <- paste("Sarcoma_", toString(sar))
+    sar_cancer[name] <- curated[,i+1]
+    sar = sar + 1 
+  } else if (cancer_type == "Pa" | cancer_type == "PC") {
+    name <- paste("Pancreatic_", toString(pan))
+    pan_cancer[name] <- curated[,i+1]
+    pan = pan + 1 
+  } else if (cancer_type == "PR") {
+    name <- paste("Prostate_", toString(pro))
+    pro_cancer[name] <- curated[,i+1]
+    pro = pro + 1 
+    
+  } else if (cancer_type == "Bi" | cancer_type == "BT") {
+    name <- paste("Biliary_", toString(bil))
+    bil_cancer[name] <- curated[,i+1]
+    bil = bil + 1 
+  } else{
+    name <- paste("NonCancer_", toString(non))
+    non_cancer[name] <- curated[,i+1]
+    non = non + 1 
+  }
+}
+
+
+#Randomly divide into Discovery and Validation set for each cancer
+
+set.seed(99)
+bladder_cancer$X1.nrow.curated. <- NULL
+disc <-  sample(ncol(bladder_cancer), floor(0.7*ncol(bladder_cancer)))
+bladder.train <- bladder_cancer[,disc]
+bladder.test <- bladder_cancer[,-disc]
+
+set.seed(101)
+hep_cancer$X1.nrow.curated. <- NULL
+disc <-  sample(ncol(hep_cancer), floor(0.7*ncol(hep_cancer)))
+hep.train <- hep_cancer[,disc]
+hep.test <- hep_cancer[,-disc]
+
+set.seed(103)
+bre_cancer$X1.nrow.curated. <- NULL
+disc <-  sample(ncol(bre_cancer), floor(0.8*ncol(bre_cancer)))
+bre.train <- bre_cancer[,disc]
+bre.test <- bre_cancer[,-disc]
+
+
+set.seed(105)
+crc_cancer$X1.nrow.curated. <- NULL
+disc <-  sample(ncol(crc_cancer), floor(0.8*ncol(crc_cancer)))
+crc.train <- crc_cancer[,disc]
+crc.test <- crc_cancer[,-disc]
+
+set.seed(107)
+eso_cancer$X1.nrow.curated. <- NULL
+disc <-  sample(ncol(eso_cancer), floor(0.8*ncol(eso_cancer)))
+eso.train <- eso_cancer[,disc]
+eso.test <- eso_cancer[,-disc]
+
+set.seed(109)
+gas_cancer$X1.nrow.curated. <- NULL
+disc <-  sample(ncol(gas_cancer), floor(0.8*ncol(gas_cancer)))
+gas.train <- gas_cancer[,disc]
+gas.test <- gas_cancer[,-disc]
+
+set.seed(111)
+lung_cancer$X1.nrow.curated. <- NULL
+disc <-  sample(ncol(lung_cancer), floor(0.8*ncol(lung_cancer)))
+lung.train <- lung_cancer[,disc]
+lung.test <- lung_cancer[,-disc]
+
+set.seed(113)
+ova_cancer$X1.nrow.curated. <- NULL
+disc <-  sample(ncol(ova_cancer), floor(0.7*ncol(ova_cancer)))
+ova.train <- ova_cancer[,disc]
+ova.test <- ova_cancer[,-disc]
+
+set.seed(115)
+glio_cancer$X1.nrow.curated. <- NULL
+disc <-  sample(ncol(glio_cancer), floor(0.8*ncol(glio_cancer)))
+glio.train <- glio_cancer[,disc]
+glio.test <- glio_cancer[,-disc]
+
+set.seed(117)
+sar_cancer$X1.nrow.curated. <- NULL
+disc <-  sample(ncol(sar_cancer), floor(0.8*ncol(sar_cancer)))
+sar.train <- sar_cancer[,disc]
+sar.test <- sar_cancer[,-disc]
+
+set.seed(119)
+pan_cancer$X1.nrow.curated. <- NULL
+disc <-  sample(ncol(pan_cancer), floor(0.8*ncol(pan_cancer)))
+pan.train <- pan_cancer[,disc]
+pan.test <- pan_cancer[,-disc]
+
+set.seed(121)
+pro_cancer$X1.nrow.curated. <- NULL
+disc <-  sample(ncol(pro_cancer), floor(0.4*ncol(pro_cancer)))
+pro.train <- pro_cancer[,disc]
+pro.test <- pro_cancer[,-disc]
+
+set.seed(107)
+bil_cancer$X1.nrow.curated. <- NULL
+disc <-  sample(ncol(bil_cancer), floor(0.8*ncol(bil_cancer)))
+bil.train <- bil_cancer[,disc]
+bil.test <- bil_cancer[,-disc]
+
+set.seed(123)
+non_cancer$X1.nrow.curated. <- NULL
+disc <-  sample(ncol(non_cancer), floor(0.8*ncol(non_cancer)))
+non.train <- non_cancer[,disc]
+non.test <- non_cancer[,-disc]
+
+
+Discovery_set <- Reduce(cbind, list(bladder.train, hep.train, crc.train, bre.train, pan.train, glio.train, sar.train, lung.train, ova.train, eso.train, gas.train, pro.train, bil.train, non.train))
+Test_set <- Reduce(cbind, list(bladder.test, hep.test, crc.test, bre.test, pan.test, glio.test, sar.test, lung.test, ova.test, eso.test, gas.test, pro.test, bil.test, non.test))
+
+
+#write.csv(Discovery_set, "Discovery_set.csv", sep='\t')
+#write.csv(Test_set, "Test_set.csv", sep='\t')
+
+```
+
+```{r}
+
+# Doing Welch's t test and generating FDR and filtering top 500 miRNAs and writing in the table as "Curated_training_genes.csv" to be used later
+rowname <- row.names(data)
+data <- as.data.frame(t(data), )
+data <- tibble::rownames_to_column(data, "Samples")
+
+head(data)
+
+union_genes <- subset(data, Samples %in% gene_frequency$miRNA[1:5])
+
+union_genes <- as.data.frame(t(union_genes), )
+
+colnames(union_genes) <- union_genes[1,]
+union_genes <- union_genes[-1, ] 
+
+
+t_test_lst <- vector(mode = "list")
+p_values_lst <- 1:length(colnames(union_genes))
+logFC_lst <- 1:length(colnames(union_genes))
+x = 1
+for (i in colnames(union_genes)){
+  if (i == "isCancer") {
+    break
+  }
+  t_test_lst[[i]] <- t.test(as.numeric(union_genes[[i]][1:2250]), as.numeric(union_genes[[i]][2251:4497]), var.equal = FALSE)
+  union_genes[[i]] <- as.numeric(union_genes[[i]])
+  p_values_lst[x] <- t_test_lst[[i]]$p.value
+  logFC <- log2(mean(union_genes[[i]][1:2250])/mean(union_genes[[i]][2251:4497]))
+  logFC_lst[x] <- logFC
+  x = x + 1
+  
+}
+
+#write.csv(union_genes_data, "Curated_training_Genes.csv", sep='\t')
+```
+
+
+```{r}
+# Now generating 100 random forest models
+
+cancer <- read.csv("Discovery.csv", header = TRUE)
+dge <- read.csv("Curated_training_Genes.csv", header = TRUE)
+
+
+top_miRNA <- dge$data.Samples[1:500]
+top_miRNA
+head(cancer)
+cancer <- subset(cancer,Gene %in% top_miRNA )
+miRNA <- cancer$Gene
+cancer$Gene <- NULL
+row.names(cancer) <- miRNA
+
+cancer <- 2^cancer
+
+label <- factor(c("A", "B"))
+column <- 1:length(colnames(cancer))
+x = 1
+j = 1
+s = 1
+for (i in colnames(cancer)) {
+  if (substr(i, start = 1, stop = 3) == "Non") {
+    label[x] = "B"
+    column[x] <- paste("normal_", toString(j))
+    j = j + 1
+  } else {
+    label[x] = "A"
+    column[x] <- paste("cancer_", toString(s))
+    s = s + 1
+  }
+  x = x + 1
+}
+colnames(cancer) <- column
+data <- as.data.frame(t(cancer))
+data$isCancer <- label
+
+
+seed = 35 
+ConfusionMatrices <- vector("list", 100)
+for (i in 1:100) {
+ ConfusionMatrices[[i]] <- matrix(NA, nrow=2, ncol=2)
+}
+
+for (i in 1:100) {
+  set.seed(seed)
+  train <-  sample(nrow(data), floor(0.7*nrow(data)))
+  train.micro <- data[train,]
+  test.micro <- data[-train,]
+  
+  tgrid <- expand.grid(
+  .mtry = 1:30,
+  .splitrule = "gini", 
+  .min.node.size = 1
+  )
+  set.seed(seed + 11)
+  rf.cv <- train(isCancer ~ ., 
+                   data = train.micro,
+                   method = "ranger",
+                   tuneGrid = tgrid,
+                   trControl = trainControl(method = "cv", number = 10, verboseIter = TRUE)
+                   )
+  mtry <- rf.cv$bestTune$mtry
+  
+  set.seed(seed + 11)
+  rf_model <- ranger(isCancer ~ ., mtry = mtry, data = train.micro, importance = "impurity")
+  rf_pred <- predict(rf_model, data = test.micro)
+  ConfusionMatrices[[i]] <- table(rf_pred$predictions, test.micro$isCancer) 
+  ranger_gini <- as.data.frame(rf_model$variable.importance)
+  
+  setDT(ranger_gini, keep.rownames = TRUE)[]
+  colnames(ranger_gini) <- c("Gene", "Gini")
+  ranger_gini_table <- ranger_gini %>% arrange(desc(Gini))
+  gini_table_name <- paste("rf_gini_", toString(i))
+  write.csv(ranger_gini_table, gini_table_name, sep='\t')
+  seed = seed + 99
+}
+```
+
+```{r}
+# Getting the top 10 miRNAs from 100 random forest models
+lst <- vector(mode = "list", length = 100)
+
+for (i in 1:100) {
+  file <- paste("rf_gini_", toString(i))
+  gini <- read.csv(file, header = TRUE, sep = ",")
+  lst[[i]] <- gini$Gene[1:10]
+}
+
+
+miRNA <- Reduce(union, lst)
+frequency <- 1:length(miRNA)
+k = 1
+for (gene in miRNA) {
+  count = 0
+  for (i in 1:length(lst)) {
+    if (gene %in% lst[[i]]) {
+      count = count + 1
+    } 
+  }
+  frequency[k] <- count 
+  k = k + 1
+}
+
+
+gene_frequency <- data.frame(miRNA, frequency)
+
+gene_frequency <- gene_frequency %>% arrange(desc(frequency))
+
+gene_frequency$miRNA[1:5]
+gene_frequency
+```
+
+
+```{r}
+
+```{r}
+# Testing validation set
+
+valid <- read.csv("Validation_Set.csv", header = TRUE)
+
+miRNA_valid <- valid$Gene 
+valid$Gene <- NULL
+row.names(valid) <- miRNA_valid
+
+valid <- 2^valid
+
+head(valid)
+
+label <- factor(c(1, 0))
+column <- 1:1664
+x = 1
+j = 1
+s = 1
+for (i in colnames(valid)) {
+  if (substr(i, start = 1, stop = 3) == "Non") {
+    label[x] = 0
+    column[x] <- paste("normal_", toString(j))
+    j = j + 1
+  } else {
+    label[x] = 1
+    column[x] <- paste("cancer_", toString(s))
+    s = s + 1
+  }
+  x = x + 1
+}
+colnames(valid) <- column
+valid_data <- as.data.frame(t(valid))
+valid_data$isCancer <- label
+
+
+valid_data <- as.data.frame(t(valid_data), )
+valid_data <- tibble::rownames_to_column(valid_data, "Samples")
+
+
+valid_union_genes <- subset(valid_data, Samples %in% gene_frequency$miRNA[1:5])
+
+valid_union_genes <- as.data.frame(t(valid_union_genes), )
+
+colnames(valid_union_genes) <- valid_union_genes[1,]
+valid_union_genes <- valid_union_genes[-1, ] 
+
+t_test_lst <- vector(mode = "list")
+p_values_lst <- vector(mode = "list")
+for (i in colnames(valid_union_genes)){
+  
+  t_test_lst[[i]] <- t.test(as.numeric(valid_union_genes[[i]][1:1102]), as.numeric(valid_union_genes[[i]][1103:1664]), var.equal = FALSE)
+  valid_union_genes[[i]] <- as.numeric(valid_union_genes[[i]])
+  p_values_lst[[i]] <- t_test_lst[[i]]$p.value
+  
+}
+
+t_test_lst
+p_values_lst
+
+cancer_label <- factor(c(1, 0))
+y = 1 
+for (i in row.names(valid_union_genes)) {
+  if (substr(i, start = 1, stop = 3) == "can") {
+    cancer_label[y] <- 1
+  } else {
+    cancer_label[y] <- 0
+  }
+  y = y + 1
+}
+
+valid_union_genes$isCancer <- cancer_label
+
+```
+
+```{r}
+# AUC on Discovery set for reference (AUC on validation set done the same way but just using the same model built on discovery set on validation set)
+
+MIMAT0003326_model <- multinom(isCancer ~ MIMAT0003326, family = "binomial", data = union_genes)
+pred_MIMAT0003326 <- predict(MIMAT0003326_model, valid_union_genes, type = 'prob')
+pred_MIMAT0003326 <- ROCR::prediction(pred_MIMAT0003326, valid_union_genes$isCancer)
+roc_MIMAT0003326 <- ROCR::performance(pred_MIMAT0003326, "tpr", "fpr")
+
+MIMAT0027504_model <- multinom(isCancer ~ MIMAT0027504, family = "binomial", data = union_genes)
+pred_MIMAT0027504 <- predict(MIMAT0027504_model, valid_union_genes, type = 'prob')
+pred_MIMAT0027504 <- ROCR::prediction(pred_MIMAT0027504, valid_union_genes$isCancer)
+roc_MIMAT0027504 <- ROCR::performance(pred_MIMAT0027504, "tpr", "fpr")
+
+
+MIMAT0027468_model <- multinom(isCancer ~ MIMAT0027468, family = "binomial", data = union_genes)
+pred_MIMAT0027468 <- predict(MIMAT0027468_model, valid_union_genes, type = 'prob')
+pred_MIMAT0027468 <- ROCR::prediction(pred_MIMAT0027468, valid_union_genes$isCancer)
+roc_MIMAT0027468 <- ROCR::performance(pred_MIMAT0027468, "tpr", "fpr")
+
+MIMAT0015064_model <- multinom(isCancer ~ MIMAT0015064, family = "binomial", data = union_genes)
+pred_MIMAT0015064 <- predict(MIMAT0015064_model, valid_union_genes, type = 'prob')
+pred_MIMAT0015064 <- ROCR::prediction(pred_MIMAT0015064, valid_union_genes$isCancer)
+roc_MIMAT0015064 <- ROCR::performance(pred_MIMAT0015064, "tpr", "fpr")
+
+MIMAT0031000_model <- multinom(isCancer ~ MIMAT0031000, family = "binomial", data = union_genes)
+pred_MIMAT0031000 <- predict(MIMAT0031000_model, valid_union_genes, type = 'prob')
+pred_MIMAT0031000 <- ROCR::prediction(pred_MIMAT0031000, valid_union_genes$isCancer)
+roc_MIMAT0031000 <- ROCR::performance(pred_MIMAT0031000, "tpr", "fpr")
+
+
+combined_model <- multinom(isCancer ~ MIMAT0003326 + MIMAT0027504  + MIMAT0015064 + MIMAT0031000, family = "binomial", data = union_genes) #all the combinations tested. Best one is this one with only 4 miRNA
+pred_combined <- predict(combined_model, valid_union_genes, type = 'prob')
+pred_combined <- ROCR::prediction(pred_combined, valid_union_genes$isCancer)
+roc_combined <- ROCR::performance(pred_combined, "tpr", "fpr")
+
+```
+
